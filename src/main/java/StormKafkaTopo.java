@@ -1,15 +1,21 @@
 
+import com.hbjycl.bolt.AfterBolt;
+import com.hbjycl.bolt.BeforeBolt;
+import com.hbjycl.bolt.PersistentBolt;
 import org.apache.storm.Config;
-import org.apache.storm.LocalCluster;
 import org.apache.storm.StormSubmitter;
+import org.apache.storm.jdbc.bolt.JdbcInsertBolt;
+import org.apache.storm.jdbc.common.ConnectionProvider;
+import org.apache.storm.jdbc.common.HikariCPConnectionProvider;
+import org.apache.storm.jdbc.mapper.JdbcMapper;
+import org.apache.storm.jdbc.mapper.SimpleJdbcMapper;
 import org.apache.storm.kafka.*;
 import org.apache.storm.kafka.bolt.KafkaBolt;
-import org.apache.storm.kafka.bolt.mapper.FieldNameBasedTupleToKafkaMapper;
-import org.apache.storm.kafka.bolt.selector.DefaultTopicSelector;
-import org.apache.storm.kafka.trident.TridentKafkaStateFactory;
+import org.apache.storm.shade.com.google.common.collect.Maps;
 import org.apache.storm.spout.SchemeAsMultiScheme;
 import org.apache.storm.topology.TopologyBuilder;
-import org.apache.storm.utils.Utils;
+
+import java.util.Map;
 import java.util.Properties;
 import java.util.UUID;
 
@@ -19,7 +25,7 @@ public class StormKafkaTopo {
         TopologyBuilder builder = new TopologyBuilder();
 
         BrokerHosts hosts = new ZkHosts("h1:2181,h2:2181,h3:2181");
-        SpoutConfig spoutConfig = new SpoutConfig(hosts, "topic", "/storm", UUID.randomUUID().toString());
+        SpoutConfig spoutConfig = new SpoutConfig(hosts, "jdbctopic", "/storm", UUID.randomUUID().toString());
         spoutConfig.scheme = new SchemeAsMultiScheme(new StringScheme());
         KafkaSpout kafkaSpout = new KafkaSpout(spoutConfig);
         builder.setSpout("spout", kafkaSpout, 5);
@@ -31,8 +37,14 @@ public class StormKafkaTopo {
         props.put("value.serializer", "org.apache.kafka.common.serialization.StringSerializer");
         KafkaBolt bolt = new KafkaBolt().withProducerProperties(props);
 
-        builder.setBolt("bolt", new SenqueceAfterBolt(),2).shuffleGrouping("spout");
-        builder.setBolt("kafkabolt", bolt,2).shuffleGrouping("bolt");
+        builder.setBolt("beforebolt", new BeforeBolt(),1).shuffleGrouping("spout");
+
+        builder.setBolt("jdbcbolt", PersistentBolt.getJdbcLookupBlot(),2).shuffleGrouping("beforebolt");
+        builder.setBolt("afterbolt", new AfterBolt(),1).shuffleGrouping("jdbcbolt");
+
+
+        builder.setBolt("kafkabolt", bolt,2).shuffleGrouping("afterbolt");
+
 
         Config config = new Config();
         config.put("metadata.broker.list","h1:9092,h2:9092,h3:9092");
@@ -41,17 +53,6 @@ public class StormKafkaTopo {
 
         StormSubmitter.submitTopology(UUID.randomUUID().toString(), config, builder.createTopology());
 
-        /*if (args != null && args.length > 0) {
-            config.setNumWorkers(3);
-            StormSubmitter.submitTopology(args[0], config, builder.createTopology());
-        } else {
-
-            LocalCluster cluster = new LocalCluster();
-            cluster.submitTopology("Topo", config, builder.createTopology());
-            Utils.sleep(100000);
-            cluster.killTopology("Topo");
-            cluster.shutdown();
-        }*/
 
     }
 }
